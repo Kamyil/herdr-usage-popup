@@ -20,6 +20,6 @@ jobs:
         run: |
           set -eu
           test -f herdr-plugin.toml
-          grep -q '^id = "herdr-omp-usage"$' herdr-plugin.toml
+          grep -q '^id = "herdr-usage-popup"$' herdr-plugin.toml
           grep -q '^version = ' herdr-plugin.toml
           grep -q '^min_herdr_version = ' herdr-plugin.toml

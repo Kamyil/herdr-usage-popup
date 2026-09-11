@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OMP Usage — model usage bars for a Herdr popup panel.
+# Usage Popup — model usage bars for a Herdr popup panel.
 #
 # Data source: `omp usage --json` (oh-my-pi's credential store and its own
 # five-minute usage cache). Rendering is deliberately plain: no theme colors,
@@ -20,7 +20,7 @@ QUIT=0
 FRACTIONAL_TIMEOUT=0
 (( ${BASH_VERSINFO[0]:-3} >= 4 )) && FRACTIONAL_TIMEOUT=1
 
-USAGE_TMP=$(mktemp "${TMPDIR:-/tmp}/herdr-omp-usage.XXXXXX") || USAGE_TMP=""
+USAGE_TMP=$(mktemp "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || USAGE_TMP=""
 cleanup() { [[ -n $USAGE_TMP ]] && rm -f "$USAGE_TMP"; }
 trap 'cleanup; printf "\033[H\033[2J"; exit 0' INT TERM
 trap cleanup EXIT

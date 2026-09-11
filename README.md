@@ -1,11 +1,11 @@
-# OMP Usage
+# herdr-usage-popup
 
-Model usage percentages from [oh-my-pi](https://github.com/can1357/oh-my-pi)
-(`omp`) as plain bars in a Herdr popup panel.
+Model usage percentages as plain bars in a Herdr popup panel.
 
-A Herdr plugin that opens a popup showing the quota windows OMP already tracks
-for every authenticated provider account. Bars only: no theme colors, no brand
-styling, no writes to your Herdr config.
+A Herdr plugin that opens a popup showing the quota windows
+[oh-my-pi](https://github.com/can1357/oh-my-pi) (`omp`) already tracks for every
+authenticated provider account. Bars only: no theme colors, no brand styling,
+no writes to your Herdr config.
 
 ```
 Model usage · 09:41
@@ -34,7 +34,7 @@ r refresh · q close
 ## Install
 
 ```sh
-herdr plugin install Kamyil/herdr-omp-usage
+herdr plugin install Kamyil/herdr-usage-popup
 ```
 
 Bind a key (optional but recommended) in `~/.config/herdr/config.toml`:
@@ -43,7 +43,7 @@ Bind a key (optional but recommended) in `~/.config/herdr/config.toml`:
 [[keys.command]]
 key = ["prefix+u", "ctrl+u"]
 type = "plugin_action"
-command = "herdr-omp-usage.open"
+command = "herdr-usage-popup.open"
 description = "open model usage"
 ```
 
@@ -56,7 +56,7 @@ herdr server reload-config
 Without a keybinding, open the popup from the CLI:
 
 ```sh
-herdr plugin action invoke open --plugin herdr-omp-usage
+herdr plugin action invoke open --plugin herdr-usage-popup
 ```
 
 ## Controls

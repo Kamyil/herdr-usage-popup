@@ -1,5 +1,5 @@
-id = "herdr-omp-usage"
-name = "OMP Usage"
+id = "herdr-usage-popup"
+name = "Usage Popup"
 version = "0.1.0"
 min_herdr_version = "0.7.4"
 description = "Model usage percentages from oh-my-pi (omp) as plain bars in a popup panel"
@@ -8,7 +8,7 @@ platforms = ["linux", "macos"]
 [[actions]]
 id = "open"
 title = "Open model usage"
-command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-omp-usage --entrypoint usage --focus"]
+command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-usage-popup --entrypoint usage --focus"]
 
 [[panes]]
 id = "usage"
