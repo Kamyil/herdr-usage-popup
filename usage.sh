@@ -30,9 +30,10 @@ FRACTIONAL_TIMEOUT=0
 US=$(printf '\037')
 COLLECTORS=(collect_codex collect_opencode_go)
 
-ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || ROWS_TMP=""
-cleanup() { [[ -n $ROWS_TMP ]] && rm -f "$ROWS_TMP"; }
-trap 'cleanup; printf "\033[H\033[2J"; exit 0' INT TERM
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || WORK_DIR=""
+ROWS_TMP="${WORK_DIR:+$WORK_DIR/rows}"
+cleanup() { [[ -n $WORK_DIR ]] && rm -rf "$WORK_DIR"; }
+trap 'cleanup; printf "\033[H\033[2J"; exit 0' INT TERM HUP
 trap cleanup EXIT
 
 duration() { # seconds -> 3d19h / 46m
@@ -77,9 +78,12 @@ error_row() { printf '%s\037%s\037%s\037!%s\037\037\n' "$1" "" "" "$2"; }
 collect_codex() {
   local key=openai-codex bin dir fifo out pid i
   bin=$(command -v "$CODEX_BIN") || return 0
-  dir=$(mktemp -d "${TMPDIR:-/tmp}/herdr-usage-popup-codex.XXXXXX") || return 0
+  [[ -n $WORK_DIR ]] || return 0
+  dir="$WORK_DIR/codex"
+  rm -rf "$dir"
+  mkdir -p "$dir" || return 0
   fifo="$dir/in"; out="$dir/out"
-  if ! mkfifo "$fifo" 2>/dev/null; then rm -rf "$dir"; return 0; fi
+  mkfifo "$fifo" 2>/dev/null || return 0
 
   # `exec 3<>` opens the FIFO read+write without blocking, and holding that fd
   # keeps the server's stdin open: app-server exits on EOF before answering.
