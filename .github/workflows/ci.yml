@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: bash -n usage.sh
+
+      - name: ShellCheck
+        run: shellcheck --severity=warning usage.sh
+
+      - name: Manifest sanity
+        run: |
+          set -eu
+          test -f herdr-plugin.toml
+          grep -q '^id = "herdr-omp-usage"$' herdr-plugin.toml
+          grep -q '^version = ' herdr-plugin.toml
+          grep -q '^min_herdr_version = ' herdr-plugin.toml
