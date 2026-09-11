@@ -1,6 +1,6 @@
 id = "herdr-usage-popup"
 name = "Usage Popup"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.7.4"
 description = "Model usage percentages as plain bars in a popup panel"
 platforms = ["linux", "macos"]
@@ -9,6 +9,16 @@ platforms = ["linux", "macos"]
 id = "open"
 title = "Open model usage"
 command = ["sh", "-c", "exec \"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-usage-popup --entrypoint usage --focus"]
+
+[[actions]]
+id = "claude-hook-install"
+title = "Install Claude Code statusLine hook"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/claude-hook.sh\" install"]
+
+[[actions]]
+id = "claude-hook-remove"
+title = "Remove Claude Code statusLine hook"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/claude-hook.sh\" remove"]
 
 [[panes]]
 id = "usage"

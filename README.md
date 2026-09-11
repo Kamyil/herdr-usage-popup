@@ -14,6 +14,10 @@ OpenAI Codex · plus · you@example.com
   7d             ████████████████░░░░░░░░   67%  resets 3d19h
   7d/gpt-reserve ░░░░░░░░░░░░░░░░░░░░░░░░    0%  resets 6d23h
 
+Claude Code
+  5h             ██████████░░░░░░░░░░░░░░   41%  resets 3h12m
+  7d             ████░░░░░░░░░░░░░░░░░░░░   17%  resets 5d08h
+
 OpenCode Go · OpenCode Go
   5h             ████░░░░░░░░░░░░░░░░░░░░   17%  resets 46m
   7d             ████████████░░░░░░░░░░░░   52%  resets 2d12h
@@ -35,6 +39,7 @@ r refresh · q close
 | Provider | Source | Credential owner |
 | --- | --- | --- |
 | OpenAI Codex | `codex app-server` → `account/read`, `account/rateLimits/read` | Codex CLI |
+| Claude Code | its own `statusLine` payload (`rate_limits`) | Claude Code |
 | OpenCode Go | `omp usage --json --provider opencode-go` | oh-my-pi |
 
 Codex is queried over its own app-server JSON-RPC surface, so the plugin never
@@ -42,6 +47,36 @@ reads `~/.codex/auth.json` and never refreshes a token — the Codex CLI stays t
 only thing that touches its credentials. OpenCode Go's key exists only inside
 oh-my-pi (the `opencode` CLI reports zero credentials), so `omp` is the only
 supported way to read it.
+
+## Claude Code
+
+Claude Code has no usage command. It does report subscription windows to its
+`statusLine` command, so this plugin ships a sink for that and a hook installer:
+
+```sh
+herdr plugin action invoke claude-hook-install --plugin herdr-usage-popup
+herdr plugin action invoke claude-hook-remove  --plugin herdr-usage-popup
+```
+
+Installing writes `~/.claude/settings.json` (honoring `CLAUDE_CONFIG_DIR`),
+backs up the previous file beside it, and preserves every other key. Restart a
+running Claude Code session to pick it up. Equivalently, by hand:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "HERDR_USAGE_STATE_DIR='~/.local/state/herdr/plugins/herdr-usage-popup' '/path/to/plugin/claude-statusline.sh'",
+  "refreshInterval": 60
+}
+```
+
+The status line prints `5h 58% · 7d 26%`, so it replaces whatever your previous
+statusLine command displayed.
+
+Claude numbers update while a Claude Code session runs. A snapshot older than
+`HERDR_USAGE_CLAUDE_MAX_AGE` (15 minutes by default) still renders, preceded by
+an age warning so stale numbers are never mistaken for live ones. Without a
+snapshot the provider is skipped entirely.
 
 ## Install
 
@@ -89,6 +124,9 @@ plugin commands run there:
 | --- | --- | --- |
 | `HERDR_USAGE_CODEX_BIN` | `codex` | Path to the Codex CLI. |
 | `HERDR_USAGE_OMP_BIN` | `omp` | Path to `omp`, used for OpenCode Go. |
+| `HERDR_USAGE_STATE_DIR` | Herdr's plugin state dir | Where the Claude Code snapshot is written and read. |
+| `HERDR_USAGE_CLAUDE_MAX_AGE` | `900` | Seconds before the Claude snapshot is flagged stale. |
+| `HERDR_USAGE_CLAUDE_SETTINGS` | `$CLAUDE_CONFIG_DIR/settings.json` | File the Claude hook installer edits. |
 | `HERDR_USAGE_REFRESH_SECONDS` | `60` | Auto-refresh interval. |
 | `HERDR_USAGE_BAR_WIDTH` | `24` | Bar width in cells. |
 
@@ -101,6 +139,9 @@ credentials:
 - **Codex** — the plugin starts `codex -s read-only -a untrusted app-server`,
   sends `initialize`, `account/read`, and `account/rateLimits/read` over stdio,
   then shuts the server down. Nothing is written and no model request is made.
+- **Claude Code** — `claude-statusline.sh`, installed as Claude Code's
+  `statusLine` command, records the `rate_limits` block Claude Code writes to
+  its stdin; the popup reads that snapshot. No credential file is involved.
 - **OpenCode Go** — the plugin runs `omp usage --json --provider opencode-go`
   and reuses OMP's own usage cache.
 

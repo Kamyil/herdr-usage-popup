@@ -11,10 +11,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Syntax check
-        run: bash -n usage.sh
+        run: bash -n usage.sh claude-statusline.sh claude-hook.sh
 
       - name: ShellCheck
-        run: shellcheck --severity=warning usage.sh
+        run: shellcheck --severity=warning usage.sh claude-statusline.sh claude-hook.sh
 
       - name: Manifest sanity
         run: |

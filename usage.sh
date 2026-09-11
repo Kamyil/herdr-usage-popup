@@ -6,10 +6,13 @@
 # the owning CLI handles auth, and a failure surfaces as an error line.
 #
 #   openai-codex  `codex app-server`  -> account/read + account/rateLimits/read
+#   claude        statusLine snapshot written by claude-statusline.sh
 #   opencode-go   `omp usage --json --provider opencode-go`
 #
 # OpenCode Go's key exists only inside oh-my-pi (the `opencode` CLI reports zero
-# credentials), so `omp` is the only supported way to read it.
+# credentials), so `omp` is the only supported way to read it. Claude Code has
+# no usage command; it reports subscription windows to its statusLine command,
+# which claude-hook.sh installs.
 #
 # Controls: r refresh, q/Esc/Enter close. Auto-refreshes while open.
 set -uo pipefail
@@ -28,7 +31,14 @@ FRACTIONAL_TIMEOUT=0
 (( ${BASH_VERSINFO[0]:-3} >= 4 )) && FRACTIONAL_TIMEOUT=1
 
 US=$(printf '\037')
-COLLECTORS=(collect_codex collect_opencode_go)
+COLLECTORS=(collect_codex collect_claude collect_opencode_go)
+
+state_dir() {
+  if [[ -n ${HERDR_USAGE_STATE_DIR:-} ]]; then printf '%s' "$HERDR_USAGE_STATE_DIR"
+  elif [[ -n ${HERDR_PLUGIN_STATE_DIR:-} ]]; then printf '%s' "$HERDR_PLUGIN_STATE_DIR"
+  else printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/herdr-usage-popup"
+  fi
+}
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || WORK_DIR=""
 ROWS_TMP="${WORK_DIR:+$WORK_DIR/rows}"
@@ -59,6 +69,7 @@ bar() { # percent -> block bar
 pretty_provider() {
   case "$1" in
     openai-codex) printf 'OpenAI Codex' ;;
+    claude) printf 'Claude Code' ;;
     opencode-go) printf 'OpenCode Go' ;;
     anthropic) printf 'Anthropic' ;;
     openai) printf 'OpenAI' ;;
@@ -142,6 +153,35 @@ collect_codex() {
     | map(tostring) | join("\u001f")' "$out"
 
   rm -rf "$dir"
+}
+
+# Claude Code reports its subscription windows to whatever statusLine command
+# it is configured with; `claude-statusline.sh` records that payload here.
+collect_claude() {
+  local key=claude snapshot state limits recorded age max_age
+  state=$(state_dir)
+  snapshot="$state/claude-statusline.json"
+  [[ -f $snapshot ]] || return 0
+
+  limits=$(jq -c '.rateLimits // empty' "$snapshot" 2>/dev/null)
+  if [[ -z $limits || $limits == null ]]; then
+    error_row "$key" 'snapshot has no rate limits'
+    return 0
+  fi
+
+  recorded=$(jq -r '.recordedAt // 0' "$snapshot" 2>/dev/null)
+  max_age="${HERDR_USAGE_CLAUDE_MAX_AGE:-900}"
+  age=$(( $(date +%s) - ${recorded:-0} ))
+  if (( age > max_age )); then
+    error_row "$key" "last snapshot $(duration "$age") old — run Claude Code to refresh"
+  fi
+
+  printf '%s' "$limits" | jq -r --arg p "$key" '
+    [ { w: "5h", d: .five_hour }, { w: "7d", d: .seven_day } ]
+    | .[]
+    | select(.d != null and .d.used_percentage != null)
+    | [ $p, "", "", .w, (.d.used_percentage | round), (.d.resets_at // 0) ]
+    | map(tostring) | join("\u001f")'
 }
 
 collect_opencode_go() {
