@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Usage Popup — model usage bars for a Herdr popup panel.
 #
-# Data source: `omp usage --json` (oh-my-pi's credential store and its own
-# five-minute usage cache). Rendering is deliberately plain: no theme colors,
-# no brand styling, no writes to Herdr config.
+# One collector per provider, each reading that provider's own CLI usage
+# surface. No credential file is read, written, or refreshed by this plugin;
+# the owning CLI handles auth, and a failure surfaces as an error line.
+#
+#   openai-codex  `codex app-server`  -> account/read + account/rateLimits/read
+#   opencode-go   `omp usage --json --provider opencode-go`
+#
+# OpenCode Go's key exists only inside oh-my-pi (the `opencode` CLI reports zero
+# credentials), so `omp` is the only supported way to read it.
 #
 # Controls: r refresh, q/Esc/Enter close. Auto-refreshes while open.
 set -uo pipefail
 
 OMP_BIN="${HERDR_USAGE_OMP_BIN:-omp}"
+CODEX_BIN="${HERDR_USAGE_CODEX_BIN:-codex}"
 REFRESH_SECONDS="${HERDR_USAGE_REFRESH_SECONDS:-60}"
 BAR_WIDTH="${HERDR_USAGE_BAR_WIDTH:-24}"
 WINDOW_COL=14
@@ -20,8 +27,11 @@ QUIT=0
 FRACTIONAL_TIMEOUT=0
 (( ${BASH_VERSINFO[0]:-3} >= 4 )) && FRACTIONAL_TIMEOUT=1
 
-USAGE_TMP=$(mktemp "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || USAGE_TMP=""
-cleanup() { [[ -n $USAGE_TMP ]] && rm -f "$USAGE_TMP"; }
+US=$(printf '\037')
+COLLECTORS=(collect_codex collect_opencode_go)
+
+ROWS_TMP=$(mktemp "${TMPDIR:-/tmp}/herdr-usage-popup.XXXXXX") || ROWS_TMP=""
+cleanup() { [[ -n $ROWS_TMP ]] && rm -f "$ROWS_TMP"; }
 trap 'cleanup; printf "\033[H\033[2J"; exit 0' INT TERM
 trap cleanup EXIT
 
@@ -57,13 +67,108 @@ pretty_provider() {
   esac
 }
 
-# Fetches into USAGE_TMP, animating a spinner on the terminal while it runs.
-# Writes only to the terminal, never to the JSON: stdout stays clean.
-fetch_usage() {
-  [[ -n $USAGE_TMP ]] || return 1
+# Row contract, unit-separated on stdout:
+#   provider <US> plan <US> account <US> window <US> percent <US> reset_unix_s
+# A `window` beginning with `!` is a status line: the remaining fields are empty.
+error_row() { printf '%s\037%s\037%s\037!%s\037\037\n' "$1" "" "" "$2"; }
+
+# Codex reports its own limits over the app-server JSON-RPC surface, so the
+# plugin never touches ~/.codex/auth.json.
+collect_codex() {
+  local key=openai-codex bin dir fifo out pid i
+  bin=$(command -v "$CODEX_BIN") || return 0
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/herdr-usage-popup-codex.XXXXXX") || return 0
+  fifo="$dir/in"; out="$dir/out"
+  if ! mkfifo "$fifo" 2>/dev/null; then rm -rf "$dir"; return 0; fi
+
+  # `exec 3<>` opens the FIFO read+write without blocking, and holding that fd
+  # keeps the server's stdin open: app-server exits on EOF before answering.
+  exec 3<> "$fifo"
+  "$bin" -s read-only -a untrusted app-server < "$fifo" > "$out" 2>/dev/null &
+  pid=$!
+  printf '%s\n' \
+    '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"herdr-usage-popup","version":"1"}}}' \
+    '{"method":"initialized","params":{}}' \
+    '{"id":2,"method":"account/read","params":{}}' \
+    '{"id":3,"method":"account/rateLimits/read","params":{}}' >&3
+
+  i=0
+  while (( i < 100 )); do
+    grep -q '"id":3' "$out" 2>/dev/null && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$(( i + 1 ))
+  done
+
+  exec 3>&-
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+
+  if ! jq -e -s 'any(.[]; .id == 3 and .result.rateLimits)' "$out" > /dev/null 2>&1; then
+    rm -rf "$dir"
+    error_row "$key" 'codex app-server returned no limits'
+    return 0
+  fi
+
+  jq -rs --arg p "$key" '
+    def wlabel($m):
+      if $m == null or $m == 0 then "?"
+      elif ($m % 1440) == 0 then "\($m / 1440 | floor)d"
+      elif ($m % 60) == 0 then "\($m / 60 | floor)h"
+      else "\($m)m" end;
+    ([.[] | select(.id == 2) | .result.account][0] // {}) as $acct
+    | ([.[] | select(.id == 3) | .result][0] // {}) as $res
+    | ($acct.planType // $res.rateLimits.planType // "") as $plan
+    | ($acct.email // "") as $email
+    | (if (($res.rateLimitsByLimitId // {}) | length) > 0
+       then ($res.rateLimitsByLimitId
+             | to_entries
+             | map(.value + { limitId: .key })
+             | sort_by(if .limitId == "codex" then 0 else 1 end))
+       else [ ($res.rateLimits + { limitId: "codex" }) ] end)
+    | .[] as $lim
+    | (if $lim.limitId == "codex" then "" else ($lim.limitName // $lim.limitId) end) as $q
+    | ([ { w: $lim.primary }, { w: $lim.secondary } ])
+    | .[]
+    | select(.w != null and .w.usedPercent != null)
+    | [ $p, $plan, $email,
+        (wlabel(.w.windowDurationMins) + (if $q != "" then "/" + $q else "" end)),
+        (.w.usedPercent | floor),
+        (.w.resetsAt // 0) ]
+    | map(tostring) | join("\u001f")' "$out"
+
+  rm -rf "$dir"
+}
+
+collect_opencode_go() {
+  local key=opencode-go json
+  if ! command -v "$OMP_BIN" > /dev/null 2>&1; then
+    error_row "$key" "$OMP_BIN not found (the OpenCode Go credential lives in oh-my-pi)"
+    return 0
+  fi
+  if ! json=$("$OMP_BIN" usage --json --provider "$key" 2>/dev/null); then
+    error_row "$key" 'request failed'
+    return 0
+  fi
+  printf '%s' "$json" | jq -r --arg p "$key" '
+    .reports[]?
+    | select(.provider == $p)
+    | ((.metadata // {}).planType // "") as $plan
+    | .limits[]?
+    | [ $p, $plan, "",
+        ((.scope.windowId // "?") | if . == "monthly" then "mo" else . end),
+        ((.amount.usedFraction // 0) * 100 | floor),
+        ((.window.resetsAt // 0) / 1000 | floor) ]
+    | map(tostring) | join("\u001f")'
+}
+
+# Runs every collector, animating a spinner while they fetch. Rows land in
+# ROWS_TMP only; the spinner is the sole thing written to the terminal.
+run_collectors() {
+  [[ -n $ROWS_TMP ]] || return 1
   local pid key frame i=0
-  : > "$USAGE_TMP"
-  "$OMP_BIN" usage --json > "$USAGE_TMP" 2>/dev/null &
+  : > "$ROWS_TMP"
+  ( trap - EXIT; for c in "${COLLECTORS[@]}"; do "$c"; done ) >> "$ROWS_TMP" 2>/dev/null &
   pid=$!
 
   if [[ -t 1 ]]; then
@@ -91,64 +196,38 @@ render() {
   printf '\033[H\033[2J'
   printf 'Model usage · %s\n\n' "$(date '+%H:%M')"
 
-  if ! command -v "$OMP_BIN" > /dev/null 2>&1; then
-    printf '  %s not found on PATH\n' "$OMP_BIN"
-    return
-  fi
   if ! command -v jq > /dev/null 2>&1; then
     printf '  jq not found on PATH\n'
     return
   fi
 
-  fetch_usage
+  run_collectors
   (( QUIT )) && return
 
-  local json
-  json=$(< "$USAGE_TMP")
-  if [[ -z $json ]]; then
-    printf '  usage unavailable — `%s usage --json` failed\n' "$OMP_BIN"
-    return
-  fi
-
   local rows
-  rows=$(printf '%s' "$json" | jq -r '
-    def token:
-      if . == "monthly" then "mo"
-      elif . == null or . == "" then "?"
-      else . end;
-    .reports[]?
-    | .provider as $p
-    | ((.metadata // {}).planType // "") as $plan
-    | ((.metadata // {}).email // "") as $email
-    | .limits[]?
-    | [
-        $p,
-        $plan,
-        $email,
-        ((.scope.windowId // "?") | token)
-          + (if (.scope.modelId // null) then "/" + .scope.modelId else "" end),
-        ((.amount.usedFraction // 0) * 100 | floor),
-        ((.window.resetsAt // 0) / 1000 | floor)
-      ]
-    | map(tostring) | join("\u001f")')
-
+  rows=$(< "$ROWS_TMP")
   if [[ -z $rows ]]; then
-    printf '  no usage reports\n'
+    printf '  no usage available — no provider CLI found\n'
     return
   fi
 
-  local now provider plan email window pct resets head reset last=''
+  local now provider plan account window pct resets head last=''
   now=$(date +%s)
-  while IFS=$'\x1f' read -r provider plan email window pct resets; do
+  while IFS="$US" read -r provider plan account window pct resets; do
+    [[ -n $provider ]] || continue
     if [[ $provider != "$last" ]]; then
       [[ -n $last ]] && printf '\n'
       head=$(pretty_provider "$provider")
       [[ -n $plan ]] && head+=" · $plan"
-      [[ -n $email ]] && head+=" · $email"
+      [[ -n $account ]] && head+=" · $account"
       printf '%s\n' "$head"
       last=$provider
     fi
-    reset=''
+    if [[ $window == '!'* ]]; then
+      printf '  %s\n' "${window#!}"
+      continue
+    fi
+    local reset=''
     (( resets > 0 )) && reset="  resets $(duration $(( resets - now )))"
     printf '  %-*s %s %3d%%%s\n' "$WINDOW_COL" "$window" "$(bar "$pct")" "$pct" "$reset"
   done <<< "$rows"

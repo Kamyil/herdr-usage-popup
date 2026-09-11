@@ -1,8 +1,8 @@
 id = "herdr-usage-popup"
 name = "Usage Popup"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.4"
-description = "Model usage percentages from oh-my-pi (omp) as plain bars in a popup panel"
+description = "Model usage percentages as plain bars in a popup panel"
 platforms = ["linux", "macos"]
 
 [[actions]]
